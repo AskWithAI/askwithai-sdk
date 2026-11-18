@@ -1,0 +1,52 @@
+{
+  "name": "@askwithai/sdk",
+  "version": "0.1.0",
+  "description": "Call AskWithAI Decision Runtimes: typed decisions, a faux server for tests, and the askwithai command.",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@9.14.2",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "homepage": "https://github.com/AskWithAI/askwithai-sdk",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AskWithAI/askwithai-sdk.git"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "import": "./dist/cli.js"
+    }
+  },
+  "bin": {
+    "askwithai": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsup": "^9.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.0",
+    "zod": "4.4.3"
+  }
+}
