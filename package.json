@@ -1,6 +1,6 @@
 {
   "name": "@askwithai/sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Call AskWithAI Decision Runtimes: typed decisions, a faux server for tests, and the askwithai command.",
   "license": "MIT",
   "type": "module",
