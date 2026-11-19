@@ -20,6 +20,12 @@ const askwithai = new AskWithAI({ apiKey: process.env.ASKWITHAI_API_KEY! });
 const d = await askwithai.decide("acme/refund-check", { input: { amount: 42 }, idempotencyKey: orderId });
 ```
 
+The `askwithai` command covers the full Decision API — decisions, runtimes, versions, reviews,
+learning, templates and privacy — plus a generic `askwithai call <method> <path>` and
+`askwithai endpoints` that read the API's own live description, so they work against any
+endpoint, including ones added after this package's last release. Run `askwithai help` for the
+full list.
+
 Full documentation — the client's methods, typed decisions with `createDecision`, the faux test server, waiting for input requests, and the `askwithai` command — is published at [askwith.ai](https://askwith.ai).
 
 ## License

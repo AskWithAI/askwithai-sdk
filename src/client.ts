@@ -242,6 +242,11 @@ export class AskWithAI {
     return this.request<{ deleted: boolean }>("DELETE", `/v1/decisions/${encodeURIComponent(id)}`);
   }
 
+  /** Resume a decision paused by its budget (onBudget: "pause"), allowing that much more spend. */
+  resumeDecision(id: string, raiseBudgetUsd: number): Promise<Decision> {
+    return this.request("POST", `/v1/decisions/${encodeURIComponent(id)}/resume`, { raiseBudgetUsd });
+  }
+
   listReviews(status: "pending" | "settled" | "expired" = "pending") {
     return this.request<{ data: Array<{ id: string; decisionId: string; question: string; labels: string[]; requestKind: "label" | "input"; version: number; deadlineAt: string }> }>("GET", `/v1/reviews?status=${status}`);
   }
@@ -250,13 +255,28 @@ export class AskWithAI {
     return this.request("POST", `/v1/reviews/${encodeURIComponent(id)}/settle`, body);
   }
 
+  /** Every runtime in the key's workspace. */
+  listRuntimes() {
+    return this.request<{ data: Runtime[] }>("GET", "/v1/runtimes");
+  }
+
+  /** Create a runtime from JSON (`{slug, name, description, config}`) or from a package (`{files}`). */
+  createRuntime(body: { slug: string; name?: string; description?: string; config?: unknown; files?: Record<string, string> }): Promise<Runtime> {
+    return this.request("POST", "/v1/runtimes", body);
+  }
+
   getRuntime(runtime: string): Promise<Runtime> {
     return this.request("GET", `/v1/runtimes/${runtime}`);
   }
 
+  /** Rename or describe a runtime, or change its serving mode. */
+  patchRuntime(runtime: string, body: { name?: string; description?: string; slug?: string; servingMode?: ServingMode }): Promise<Runtime> {
+    return this.request("PATCH", `/v1/runtimes/${runtime}`, body);
+  }
+
   /** Switch the serving mode: parity (the provider's answer), shadow (also record the routed answer), active (routed). */
   setServingMode(runtime: string, mode: ServingMode): Promise<Runtime> {
-    return this.request("PATCH", `/v1/runtimes/${runtime}`, { servingMode: mode });
+    return this.patchRuntime(runtime, { servingMode: mode });
   }
 
   listDecisions(runtime: string, filters: { status?: string; answeredBy?: string; traceId?: string; since?: string; before?: string; disagree?: boolean; limit?: number } = {}) {
@@ -291,6 +311,61 @@ export class AskWithAI {
   /** Replay a candidate version against the live one on labeled cases. */
   replay(runtime: string, version: number, opts: { against?: "live" | number; since?: string; limit?: number; capUsd?: number } = {}): Promise<ReplayReport> {
     return this.request("POST", `/v1/runtimes/${runtime}/versions/${version}/replay`, opts);
+  }
+
+  /** Every immutable version of a runtime, newest first. */
+  listVersions(runtime: string) {
+    return this.request<{ data: Array<{ number: number; status: string; note?: string; createdAt: string }> }>("GET", `/v1/runtimes/${runtime}/versions`);
+  }
+
+  /** Promote a version through the release gates. A failed gate needs `overrideReason` (at least 10 characters). */
+  promoteVersion(runtime: string, version: number, opts: { overrideReason?: string } = {}) {
+    return this.request<{ promoted: number } & Record<string, unknown>>("POST", `/v1/runtimes/${runtime}/versions/${version}/promote`, opts);
+  }
+
+  /** Export a version as a portable decision package: a map of file path to contents, the same shape `push` sends. */
+  exportPackage(runtime: string) {
+    return this.request<{ files: Record<string, string> }>("GET", `/v1/runtimes/${runtime}/package`);
+  }
+
+  /** Look for improvements: propose a learned candidate version from cases settled by people or outcomes, replay it and check the release gates. */
+  learn(runtime: string, opts: { capUsd?: number } = {}) {
+    return this.request<Record<string, unknown>>("POST", `/v1/runtimes/${runtime}/learn`, opts);
+  }
+
+  /** Learned candidates, newest first. */
+  listLearned(runtime: string) {
+    return this.request<{ data: Array<Record<string, unknown>> }>("GET", `/v1/runtimes/${runtime}/learned`);
+  }
+
+  /**
+   * Promote (through the release gates and a canary) or discard a learned
+   * candidate. A failed gate needs `overrideReason`; a candidate that
+   * changes a high-cost answer needs a person signed in to the AskWithAI
+   * Platform and cannot be approved with only an API key.
+   */
+  decideLearned(runtime: string, id: string, action: "promote" | "discard", opts: { overrideReason?: string } = {}) {
+    return this.request<Record<string, unknown>>("POST", `/v1/runtimes/${runtime}/learned/${encodeURIComponent(id)}/${action}`, opts);
+  }
+
+  /** Runtime templates, including app templates not yet available. */
+  listTemplates() {
+    return this.request<{ data: Array<{ id: string; name: string; available: boolean } & Record<string, unknown>> }>("GET", "/v1/templates");
+  }
+
+  /** Create a runtime from a template, with its synthetic cases as a test set. */
+  useTemplate(id: string, opts: { slug?: string; name?: string } = {}) {
+    return this.request<Runtime & { template: string; testSetId: string; cases: number }>("POST", `/v1/templates/${encodeURIComponent(id)}/use`, opts);
+  }
+
+  /** Benchmark the live version on the template's synthetic cases (a runtime made from a template). */
+  evaluateTemplate(runtime: string, opts: { capUsd?: number } = {}) {
+    return this.request<Record<string, unknown>>("POST", `/v1/runtimes/${runtime}/evaluate`, opts);
+  }
+
+  /** Erase every decision with this request id or input hash (right to erasure, by caller-known identifier). */
+  purge(by: { requestId?: string; inputHash?: string }) {
+    return this.request<{ purged: number }>("POST", "/v1/privacy/purge", by);
   }
 
   /** The runtimes this key can call, in OpenRouter's catalog shape. */
