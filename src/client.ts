@@ -119,7 +119,8 @@ export interface ReplayReport {
   sources: { testCases: number; labeledDecisions: number; labeledDecisionsWithoutInput: number };
   candidate: ReplaySide;
   baseline: ReplaySide;
-  changed: Array<{ case: string; source: string; candidate: Record<string, string | null>; baseline: Record<string, string | null>; truth: Record<string, string> }>;
+  flips?: { fixed: number; broken: number; other: number; brokenRegressionIds: string[] };
+  changed: Array<{ case: string; source: string; outcome?: "fixed" | "broken" | "other"; regression?: boolean; candidate: Record<string, string | null>; baseline: Record<string, string | null>; truth: Record<string, string> }>;
   changedCount: number;
   spentUsd: number;
   notes: string[];
@@ -290,7 +291,7 @@ export class AskWithAI {
 
   /** Run the release gates on a package without saving it. */
   check(runtime: string, files: Record<string, string>) {
-    return this.request<{ passed: boolean; gates: Array<{ name: string; passed: boolean; detail: string }> }>("POST", `/v1/runtimes/${runtime}/check`, { files });
+    return this.request<{ passed: boolean; gates: Array<{ name: string; passed: boolean; detail: string }>; flips?: { fixed: number; broken: number; fixedIds: string[]; brokenIds: string[] } }>("POST", `/v1/runtimes/${runtime}/check`, { files });
   }
 
   /** Save a package as a new candidate version, creating the runtime the first time. */

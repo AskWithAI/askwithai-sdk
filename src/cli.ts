@@ -204,6 +204,9 @@ export async function run(argv: string[], env: Record<string, string | undefined
         const files = readPackage(sub ?? "askwithai");
         const r = await client.check(runtime, files);
         for (const g of r.gates) out(`${g.passed ? "PASS" : "FAIL"}  ${g.name}: ${g.detail}`);
+        if (r.flips && (r.flips.fixed > 0 || r.flips.broken > 0)) {
+          out(`Flips (holdout): ${r.flips.fixed} fixed, ${r.flips.broken} broken${r.flips.brokenIds.length ? ` (broken: ${r.flips.brokenIds.join(", ")})` : ""}`);
+        }
         out(r.passed ? "All release gates passed." : "Some release gates failed.");
         return r.passed ? 0 : 1;
       }
@@ -226,8 +229,12 @@ export async function run(argv: string[], env: Record<string, string | undefined
         show(r, () => {
           const lines = [`Replayed ${r.candidate.cases} cases (${r.sources.testCases} test cases, ${r.sources.labeledDecisions} labeled decisions).`];
           for (const side of [r.candidate, r.baseline]) lines.push(`  v${side.version}: accuracy ${pct(side.accuracy)}, realized loss per 1,000 ${usd(side.realizedLossPer1000Usd)}, cost per 1,000 ${usd(side.costPer1000Usd)}, escalated ${pct(side.escalationShare)}${side.synthetic ? " (simulated)" : ""}`);
-          lines.push(`${r.changedCount} cases changed answer.`);
-          for (const c of r.changed.slice(0, 10)) lines.push(`  ${c.source} ${c.case}: ${JSON.stringify(c.baseline)} -> ${JSON.stringify(c.candidate)} (truth ${JSON.stringify(c.truth)})`);
+          const flipSummary = r.flips ? ` (${r.flips.fixed} fixed, ${r.flips.broken} broken${r.flips.other ? `, ${r.flips.other} other` : ""})` : "";
+          lines.push(`${r.changedCount} cases changed answer${flipSummary}.`);
+          for (const c of r.changed.slice(0, 10)) {
+            const tag = c.outcome ? `[${c.outcome.toUpperCase()}]${c.regression ? " [REGRESSION]" : ""} ` : "";
+            lines.push(`  ${tag}${c.source} ${c.case}: ${JSON.stringify(c.baseline)} -> ${JSON.stringify(c.candidate)} (truth ${JSON.stringify(c.truth)})`);
+          }
           for (const n of r.notes) lines.push(`Note: ${n}`);
           return lines;
         });
