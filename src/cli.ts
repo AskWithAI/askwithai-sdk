@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readdirSync, readFileSync, mkdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { AskWithAI, AskWithAIError, type Decision, type ServingMode } from "./client";
 
 /*
@@ -92,14 +92,23 @@ export function readPackage(dir: string): Record<string, string> {
   return files;
 }
 
-/** The reverse of readPackage: write a file map to a folder. */
+/** The reverse of readPackage: write a file map to a folder, refusing paths that escape it. */
 function writePackage(dir: string, files: Record<string, string>): void {
+  const root = resolve(dir);
   for (const [path, contents] of Object.entries(files)) {
-    const full = join(dir, path);
+    if (!path || path.startsWith("/") || path.startsWith("\\") || /^[A-Za-z]:/.test(path)) {
+      throw new Error(`Refusing to write unsafe package path "${path}".`);
+    }
+    const full = resolve(root, path);
+    if (full !== root && !full.startsWith(root + sep)) {
+      throw new Error(`Refusing to write package path outside "${dir}": "${path}".`);
+    }
     mkdirSync(dirname(full), { recursive: true });
     writeFileSync(full, contents);
   }
 }
+
+const BOOLEAN_FLAGS = new Set(["json", "escalate", "disagree", "help"]);
 
 export function parseArgs(argv: string[]): { positional: string[]; flags: Record<string, string> } {
   const positional: string[] = [];
@@ -107,8 +116,13 @@ export function parseArgs(argv: string[]): { positional: string[]; flags: Record
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a.startsWith("--")) {
-      const [k, inline] = a.slice(2).split("=", 2) as [string, string | undefined];
-      flags[k] = inline ?? (argv[i + 1] && !argv[i + 1]!.startsWith("--") ? argv[++i]! : "true");
+      const body = a.slice(2);
+      const eq = body.indexOf("=");
+      const k = eq >= 0 ? body.slice(0, eq) : body;
+      const inline = eq >= 0 ? body.slice(eq + 1) : undefined;
+      if (inline !== undefined) flags[k] = inline;
+      else if (BOOLEAN_FLAGS.has(k)) flags[k] = "true";
+      else flags[k] = argv[i + 1] && !argv[i + 1]!.startsWith("--") ? argv[++i]! : "true";
     } else positional.push(a);
   }
   return { positional, flags };
@@ -131,13 +145,15 @@ function parseJsonFlag(raw: string | undefined, label: string): Record<string, u
   }
 }
 
-/** "k=v,k2=v2" -> { k: "v", k2: "v2" }. Used for --query and --header, which take one flag value. */
-function parsePairs(raw: string | undefined): Record<string, string> {
+/** "k=v,k2=v2" or "k:v,k2:v2" -> { k: "v", k2: "v2" }. Splits on the primary separator first so header values may contain "=". */
+function parsePairs(raw: string | undefined, primary: "=" | ":" = "="): Record<string, string> {
   if (!raw) return {};
+  const fallback = primary === "=" ? ":" : "=";
   return Object.fromEntries(
     raw.split(",").map((pair) => {
-      const i = pair.indexOf("=") >= 0 ? pair.indexOf("=") : pair.indexOf(":");
-      if (i < 0) throw new CliUsageError(`"${pair}" is not a k=v pair.`);
+      const pIdx = pair.indexOf(primary);
+      const i = pIdx >= 0 ? pIdx : pair.indexOf(fallback);
+      if (i < 0) throw new CliUsageError(`"${pair}" is not a k${primary}v pair.`);
       return [pair.slice(0, i).trim(), pair.slice(i + 1).trim()];
     }),
   );
@@ -447,9 +463,9 @@ export async function run(argv: string[], env: Record<string, string | undefined
         if (flags.body === "-") body = JSON.parse(readFileSync(0, "utf8"));
         else if (flags.body !== undefined) body = JSON.parse(flags.body);
         else if (flags["body-file"] !== undefined) body = JSON.parse(readFileSync(flags["body-file"], "utf8"));
-        const query = parsePairs(flags.query);
-        const qs = Object.keys(query).length ? `?${new URLSearchParams(query)}` : "";
-        const r = await client.request<unknown>(method.toUpperCase(), `${path}${qs}`, body, parsePairs(flags.header));
+        const query = parsePairs(flags.query, "=");
+        const qs = Object.keys(query).length ? `${path.includes("?") ? "&" : "?"}${new URLSearchParams(query)}` : "";
+        const r = await client.request<unknown>(method.toUpperCase(), `${path}${qs}`, body, parsePairs(flags.header, ":"));
         out(JSON.stringify(r, null, 2));
         return 0;
       }

@@ -1,5 +1,8 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { run } from "./cli";
+import { parseArgs, run } from "./cli";
 
 /*
  * The full `askwithai` command set against a mocked fetch: every curated
@@ -260,5 +263,45 @@ describe("the escape hatch: endpoints and call", () => {
     expect(r.out).toMatch(/\[FIXED\] test_case tc_1/);
     expect(r.out).toMatch(/\[BROKEN\] \[REGRESSION\] test_case tc_2/);
     expect(r.out).toMatch(/\[REGRESSION FLAKY\] tc_2: 2\/3 trials passed/);
+  });
+});
+
+describe("CLI security and argument parsing", () => {
+  it("parseArgs preserves '=' inside --flag=value and does not swallow positionals after boolean flags", () => {
+    const a = parseArgs(["--json", "runtimes", "list"]);
+    expect(a.flags.json).toBe("true");
+    expect(a.positional).toEqual(["runtimes", "list"]);
+
+    const b = parseArgs(["decide", "--escalate", "acme/refund", '--input={"url":"https://x.test?a=1&b=2"}', "--callback-url=https://hook.test/cb?token=abc=def"]);
+    expect(b.positional).toEqual(["decide", "acme/refund"]);
+    expect(b.flags.escalate).toBe("true");
+    expect(b.flags.input).toBe('{"url":"https://x.test?a=1&b=2"}');
+    expect(b.flags["callback-url"]).toBe("https://hook.test/cb?token=abc=def");
+  });
+
+  it("call preserves '=' inside --header values and rejects off-origin paths", async () => {
+    const { fetchImpl, calls } = mockFetch({ "POST /v1/models": { body: { ok: true } } });
+    const r = await cli(fetchImpl, "call", "POST", "/v1/models", "--query=a=1,b=2", "--header", "x-sig:sha256=abc==");
+    expect(r.code, r.out).toBe(0);
+    expect(calls[0]!.search).toBe("?a=1&b=2");
+    expect(calls[0]!.headers["x-sig"]).toBe("sha256=abc==");
+
+    const bad = await cli(fetchImpl, "call", "GET", ".attacker.com/leak");
+    expect(bad.code).toBe(1);
+    expect(bad.out).toMatch(/must start with a single "\/"/);
+  });
+
+  it("package --out refuses path traversal keys", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "askwithai-pkg-"));
+    try {
+      const { fetchImpl } = mockFetch({
+        "GET /v1/runtimes/acme/refund/package": { body: { files: { "../escaped.txt": "nope" } } },
+      });
+      const r = await cli(fetchImpl, "package", "acme/refund", "--out", dir);
+      expect(r.code).toBe(1);
+      expect(r.out).toMatch(/Refusing to write package path outside/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -34,10 +34,12 @@ export interface DecisionCallOptions<T, I> {
   /**
    * Shadow adoption without moving traffic: return what your current decider
    * answers, and send the same input to AskWithAI with `serving: "shadow"` so
-   * it records its own answer for comparison. AskWithAI failing never breaks
-   * the call.
+   * it records its own answer for comparison. AskWithAI failing or stalling
+   * never breaks or blocks the live call.
    */
   legacy?: (input: I) => Promise<T> | T;
+  /** Maximum milliseconds to wait for the shadow call when `legacy` is used (default 2 000). */
+  shadowTimeoutMs?: number;
 }
 
 export interface DecisionResult<T> {
@@ -76,20 +78,41 @@ export function createDecision<T extends Record<string, string>, I extends Recor
   config: { runtime: string; schema: AnswerSchema<T>; escalateIf?: (input: I) => boolean; serving?: "parity" | "shadow" },
 ): TypedDecision<T, I> {
   const call = async (input: I, options: DecisionCallOptions<T, I> = {}): Promise<DecisionResult<T>> => {
-    const send = (serving: "parity" | "shadow" | undefined) =>
-      client.decide(config.runtime, {
-        input,
-        traceId: options.traceId,
-        requestId: options.requestId,
-        parentDecisionId: options.parentDecisionId,
-        stepName: options.stepName,
-        idempotencyKey: options.idempotencyKey,
-        serving,
-        escalate: config.escalateIf?.(input) || undefined,
-        waitForMs: options.waitForMs ?? 25_000,
-      });
+    const send = (serving: "parity" | "shadow" | undefined, reqOpts?: { signal?: AbortSignal; timeoutMs?: number; waitForMs?: number }) =>
+      client.decide(
+        config.runtime,
+        {
+          input,
+          traceId: options.traceId,
+          requestId: options.requestId,
+          parentDecisionId: options.parentDecisionId,
+          stepName: options.stepName,
+          idempotencyKey: options.idempotencyKey,
+          serving,
+          escalate: config.escalateIf?.(input) || undefined,
+          waitForMs: reqOpts?.waitForMs ?? options.waitForMs ?? 25_000,
+        },
+        reqOpts,
+      );
     if (options.legacy) {
-      const [legacy, shadow] = await Promise.all([options.legacy(input), send("shadow").catch(() => null)]);
+      const shadowTimeoutMs = options.shadowTimeoutMs ?? 2_000;
+      const ac = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const shadowCall =
+        shadowTimeoutMs <= 0
+          ? (void send("shadow", { waitForMs: 0 }).catch(() => null), Promise.resolve(null))
+          : Promise.race<Decision | null>([
+              send("shadow", { waitForMs: 0, signal: ac.signal, timeoutMs: shadowTimeoutMs }).catch(() => null),
+              new Promise<null>((resolve) => {
+                timer = setTimeout(() => {
+                  ac.abort();
+                  resolve(null);
+                }, shadowTimeoutMs);
+              }),
+            ]).finally(() => {
+              if (timer !== undefined) clearTimeout(timer);
+            });
+      const [legacy, shadow] = await Promise.all([options.legacy(input), shadowCall]);
       return { answers: config.schema.parse(legacy), final: true, decision: shadow };
     }
     const decision = await send(options.serving ?? config.serving);

@@ -155,28 +155,63 @@ export interface AskWithAIOptions {
   /** Default https://api.askwith.ai; locally http://localhost:3700. */
   baseUrl?: string;
   fetch?: typeof fetch;
+  /** Default request timeout in milliseconds (default 35 000). */
+  timeoutMs?: number;
 }
 
 const FINISHED: readonly DecisionStatus[] = ["decided", "failed"];
+const DEFAULT_TIMEOUT_MS = 35_000;
+
+/** Validate `owner/slug` or `owner/slug@v3` and encode each path segment safely. */
+function runtimePath(runtime: string): string {
+  const m = runtime.match(/^([^/?#]+)\/([^/?#@]+)(?:@([^/?#]+))?$/);
+  if (!m) throw new Error(`Invalid runtime reference "${runtime}". Expected "owner/slug" or "owner/slug@v3".`);
+  const [, owner, slug, version] = m;
+  if (owner === "." || owner === ".." || slug === "." || slug === "..") {
+    throw new Error(`Invalid runtime reference "${runtime}".`);
+  }
+  return `${encodeURIComponent(owner!)}/${encodeURIComponent(slug!)}${version ? `@${encodeURIComponent(version)}` : ""}`;
+}
 
 export class AskWithAI {
   readonly baseUrl: string;
+  private readonly baseOrigin: string;
   private readonly apiKey: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number;
 
   constructor(opts: AskWithAIOptions) {
     if (!opts.apiKey) throw new Error("AskWithAI needs an API key (wai_...).");
     this.apiKey = opts.apiKey;
     this.baseUrl = (opts.baseUrl ?? "https://api.askwith.ai").replace(/\/+$/, "");
+    this.baseOrigin = new URL(this.baseUrl).origin;
     this.fetchImpl = opts.fetch ?? fetch;
+    this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
-  /** Any Decision API call. Paths start with `/v1/`. */
-  async request<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
-    const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
+  /** Any Decision API call. Paths must start with a single `/`. */
+  async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    headers: Record<string, string> = {},
+    opts: { signal?: AbortSignal; timeoutMs?: number } = {},
+  ): Promise<T> {
+    if (!path.startsWith("/") || path.startsWith("//")) {
+      throw new Error(`AskWithAI API paths must start with a single "/". Got "${path}".`);
+    }
+    const url = new URL(`${this.baseUrl}${path}`);
+    if (url.origin !== this.baseOrigin) {
+      throw new Error(`Refusing to send AskWithAI credentials to a different origin (${url.origin}).`);
+    }
+    const timeoutMs = opts.timeoutMs ?? this.timeoutMs;
+    const timeoutSignal = timeoutMs > 0 && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(timeoutMs) : undefined;
+    const signal = opts.signal && timeoutSignal && typeof AbortSignal.any === "function" ? AbortSignal.any([opts.signal, timeoutSignal]) : (opts.signal ?? timeoutSignal);
+    const res = await this.fetchImpl(url.toString(), {
       method,
       headers: { authorization: `Bearer ${this.apiKey}`, ...(body !== undefined ? { "content-type": "application/json" } : {}), ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     });
     const text = await res.text();
     let data: unknown = {};
@@ -193,9 +228,9 @@ export class AskWithAI {
   }
 
   /** Make a decision. `runtime` is "owner/slug" or "owner/slug@v3". */
-  decide(runtime: string, opts: DecideOptions): Promise<Decision> {
+  async decide(runtime: string, opts: DecideOptions, reqOpts?: { signal?: AbortSignal; timeoutMs?: number }): Promise<Decision> {
     const { idempotencyKey, ...body } = opts;
-    return this.request("POST", `/v1/decide/${runtime}`, body, idempotencyKey ? { "idempotency-key": idempotencyKey } : {});
+    return this.request("POST", `/v1/decide/${runtimePath(runtime)}`, body, idempotencyKey ? { "idempotency-key": idempotencyKey } : {}, reqOpts);
   }
 
   getDecision(id: string): Promise<Decision & { timeline: unknown[]; steps: unknown[] }> {
@@ -267,13 +302,13 @@ export class AskWithAI {
     return this.request("POST", "/v1/runtimes", body);
   }
 
-  getRuntime(runtime: string): Promise<Runtime> {
-    return this.request("GET", `/v1/runtimes/${runtime}`);
+  async getRuntime(runtime: string): Promise<Runtime> {
+    return this.request("GET", `/v1/runtimes/${runtimePath(runtime)}`);
   }
 
   /** Rename or describe a runtime, or change its serving mode. */
-  patchRuntime(runtime: string, body: { name?: string; description?: string; slug?: string; servingMode?: ServingMode }): Promise<Runtime> {
-    return this.request("PATCH", `/v1/runtimes/${runtime}`, body);
+  async patchRuntime(runtime: string, body: { name?: string; description?: string; slug?: string; servingMode?: ServingMode }): Promise<Runtime> {
+    return this.request("PATCH", `/v1/runtimes/${runtimePath(runtime)}`, body);
   }
 
   /** Switch the serving mode: parity (the provider's answer), shadow (also record the routed answer), active (routed). */
@@ -281,22 +316,23 @@ export class AskWithAI {
     return this.patchRuntime(runtime, { servingMode: mode });
   }
 
-  listDecisions(runtime: string, filters: { status?: string; answeredBy?: string; traceId?: string; since?: string; before?: string; disagree?: boolean; limit?: number } = {}) {
+  async listDecisions(runtime: string, filters: { status?: string; answeredBy?: string; traceId?: string; since?: string; before?: string; disagree?: boolean; limit?: number } = {}) {
     const q = new URLSearchParams(Object.entries(filters).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)]));
-    return this.request<{ data: Decision[]; hasMore: boolean }>("GET", `/v1/runtimes/${runtime}/decisions${q.size ? `?${q}` : ""}`);
+    return this.request<{ data: Decision[]; hasMore: boolean }>("GET", `/v1/runtimes/${runtimePath(runtime)}/decisions${q.size ? `?${q}` : ""}`);
   }
 
-  stats(runtime: string, window: "1h" | "24h" | "7d" | "30d" = "24h") {
-    return this.request<Record<string, unknown>>("GET", `/v1/runtimes/${runtime}/stats?window=${window}`);
+  async stats(runtime: string, window: "1h" | "24h" | "7d" | "30d" = "24h") {
+    return this.request<Record<string, unknown>>("GET", `/v1/runtimes/${runtimePath(runtime)}/stats?window=${window}`);
   }
 
   /** Run the release gates on a package without saving it. */
-  check(runtime: string, files: Record<string, string>) {
-    return this.request<{ passed: boolean; gates: Array<{ name: string; passed: boolean; detail: string }>; flips?: { fixed: number; broken: number; fixedIds: string[]; brokenIds: string[] } }>("POST", `/v1/runtimes/${runtime}/check`, { files });
+  async check(runtime: string, files: Record<string, string>) {
+    return this.request<{ passed: boolean; gates: Array<{ name: string; passed: boolean; detail: string }>; flips?: { fixed: number; broken: number; fixedIds: string[]; brokenIds: string[] } }>("POST", `/v1/runtimes/${runtimePath(runtime)}/check`, { files });
   }
 
   /** Save a package as a new candidate version, creating the runtime the first time. */
   async push(runtime: string, files: Record<string, string>, opts: { name?: string; note?: string } = {}): Promise<{ created: boolean; version: { number: number; status: string } }> {
+    const refPath = runtimePath(runtime);
     try {
       await this.getRuntime(runtime);
     } catch (e) {
@@ -306,38 +342,38 @@ export class AskWithAI {
       await this.request("POST", "/v1/runtimes", { slug, name: opts.name ?? slug, files });
       return { created: true, version: { number: 1, status: "live" } };
     }
-    const v = await this.request<{ number: number; status: string }>("POST", `/v1/runtimes/${runtime}/versions`, { files, note: opts.note });
+    const v = await this.request<{ number: number; status: string }>("POST", `/v1/runtimes/${refPath}/versions`, { files, note: opts.note });
     return { created: false, version: v };
   }
 
   /** Replay a candidate version against the live one on labeled cases. */
-  replay(runtime: string, version: number, opts: { against?: "live" | number; since?: string; limit?: number; capUsd?: number; trials?: number } = {}): Promise<ReplayReport> {
-    return this.request("POST", `/v1/runtimes/${runtime}/versions/${version}/replay`, opts);
+  async replay(runtime: string, version: number, opts: { against?: "live" | number; since?: string; limit?: number; capUsd?: number; trials?: number } = {}): Promise<ReplayReport> {
+    return this.request("POST", `/v1/runtimes/${runtimePath(runtime)}/versions/${version}/replay`, opts);
   }
 
   /** Every immutable version of a runtime, newest first. */
-  listVersions(runtime: string) {
-    return this.request<{ data: Array<{ number: number; status: string; note?: string; createdAt: string }> }>("GET", `/v1/runtimes/${runtime}/versions`);
+  async listVersions(runtime: string) {
+    return this.request<{ data: Array<{ number: number; status: string; note?: string; createdAt: string }> }>("GET", `/v1/runtimes/${runtimePath(runtime)}/versions`);
   }
 
   /** Promote a version through the release gates. A failed gate needs `overrideReason` (at least 10 characters). */
-  promoteVersion(runtime: string, version: number, opts: { overrideReason?: string } = {}) {
-    return this.request<{ promoted: number } & Record<string, unknown>>("POST", `/v1/runtimes/${runtime}/versions/${version}/promote`, opts);
+  async promoteVersion(runtime: string, version: number, opts: { overrideReason?: string } = {}) {
+    return this.request<{ promoted: number } & Record<string, unknown>>("POST", `/v1/runtimes/${runtimePath(runtime)}/versions/${version}/promote`, opts);
   }
 
   /** Export a version as a portable decision package: a map of file path to contents, the same shape `push` sends. */
-  exportPackage(runtime: string) {
-    return this.request<{ files: Record<string, string> }>("GET", `/v1/runtimes/${runtime}/package`);
+  async exportPackage(runtime: string) {
+    return this.request<{ files: Record<string, string> }>("GET", `/v1/runtimes/${runtimePath(runtime)}/package`);
   }
 
   /** Look for improvements: propose a learned candidate version from cases settled by people or outcomes, replay it and check the release gates. */
-  learn(runtime: string, opts: { capUsd?: number } = {}) {
-    return this.request<Record<string, unknown>>("POST", `/v1/runtimes/${runtime}/learn`, opts);
+  async learn(runtime: string, opts: { capUsd?: number } = {}) {
+    return this.request<Record<string, unknown>>("POST", `/v1/runtimes/${runtimePath(runtime)}/learn`, opts);
   }
 
   /** Learned candidates, newest first. */
-  listLearned(runtime: string) {
-    return this.request<{ data: Array<Record<string, unknown>> }>("GET", `/v1/runtimes/${runtime}/learned`);
+  async listLearned(runtime: string) {
+    return this.request<{ data: Array<Record<string, unknown>> }>("GET", `/v1/runtimes/${runtimePath(runtime)}/learned`);
   }
 
   /**
@@ -346,8 +382,8 @@ export class AskWithAI {
    * changes a high-cost answer needs a person signed in to the AskWithAI
    * Platform and cannot be approved with only an API key.
    */
-  decideLearned(runtime: string, id: string, action: "promote" | "discard", opts: { overrideReason?: string } = {}) {
-    return this.request<Record<string, unknown>>("POST", `/v1/runtimes/${runtime}/learned/${encodeURIComponent(id)}/${action}`, opts);
+  async decideLearned(runtime: string, id: string, action: "promote" | "discard", opts: { overrideReason?: string } = {}) {
+    return this.request<Record<string, unknown>>("POST", `/v1/runtimes/${runtimePath(runtime)}/learned/${encodeURIComponent(id)}/${action}`, opts);
   }
 
   /** Runtime templates, including app templates not yet available. */
@@ -361,8 +397,8 @@ export class AskWithAI {
   }
 
   /** Benchmark the live version on the template's synthetic cases (a runtime made from a template). */
-  evaluateTemplate(runtime: string, opts: { capUsd?: number } = {}) {
-    return this.request<Record<string, unknown>>("POST", `/v1/runtimes/${runtime}/evaluate`, opts);
+  async evaluateTemplate(runtime: string, opts: { capUsd?: number } = {}) {
+    return this.request<Record<string, unknown>>("POST", `/v1/runtimes/${runtimePath(runtime)}/evaluate`, opts);
   }
 
   /** Erase every decision with this request id or input hash (right to erasure, by caller-known identifier). */

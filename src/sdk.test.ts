@@ -74,6 +74,41 @@ describe("createDecision", () => {
     const down = new AskWithAI({ apiKey: KEY, fetch: (async () => { throw new TypeError("fetch failed"); }) as typeof fetch });
     const r2 = await createDecision(down, { runtime: "theory/alert-review", schema })({ amount: 9 }, { legacy });
     expect(r2).toMatchObject({ answers: { suspicious: "legitimate" }, decision: null });
+
+    // A stalled AskWithAI request must not block the legacy answer past shadowTimeoutMs.
+    let aborted = false;
+    const hung = new AskWithAI({
+      apiKey: KEY,
+      fetch: ((_: string | URL | Request, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            aborted = true;
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        })) as typeof fetch,
+    });
+    const t0 = Date.now();
+    const r3 = await createDecision(hung, { runtime: "theory/alert-review", schema })({ amount: 9 }, { legacy, shadowTimeoutMs: 40 });
+    expect(r3).toMatchObject({ answers: { suspicious: "legitimate" }, decision: null });
+    expect(Date.now() - t0).toBeLessThan(1_000);
+    expect(aborted).toBe(true);
+  });
+
+  it("refuses off-origin paths and invalid runtime references so API keys cannot leak", async () => {
+    let called = false;
+    const client = new AskWithAI({
+      apiKey: KEY,
+      baseUrl: "https://api.askwith.ai",
+      fetch: (async () => {
+        called = true;
+        return new Response("{}");
+      }) as typeof fetch,
+    });
+    await expect(client.request("GET", ".attacker.com/steal")).rejects.toThrow(/must start with a single "\/"/);
+    await expect(client.request("GET", "//attacker.com/steal")).rejects.toThrow(/must start with a single "\/"/);
+    await expect(client.decide("../admin/secret", { input: {} })).rejects.toThrow(/Invalid runtime reference/);
+    await expect(client.getRuntime("acme/refund?foo=bar")).rejects.toThrow(/Invalid runtime reference/);
+    expect(called).toBe(false);
   });
 
   it("a pending person review gives provisional answers with final: false; settling makes them final", async () => {
