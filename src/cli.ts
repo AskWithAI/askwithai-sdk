@@ -43,7 +43,7 @@ Runtimes
 Versions and replay
   askwithai versions list    owner/slug
   askwithai versions promote owner/slug <v> [--override-reason x]
-  askwithai replay --runtime owner/slug --version 3 [--against live|2] [--since 24h] [--limit 50] [--cap 1]
+  askwithai replay --runtime owner/slug --version 3 [--against live|2] [--since 24h] [--limit 50] [--cap 1] [--trials 3]
 
 Reviews
   askwithai reviews list [--status pending|settled|expired]
@@ -225,7 +225,7 @@ export async function run(argv: string[], env: Record<string, string | undefined
         const version = Number(flags.version);
         if (!Number.isInteger(version) || version < 1) throw new CliUsageError("Give the candidate version with --version.");
         const against = flags.against === undefined || flags.against === "live" ? "live" : Number(flags.against);
-        const r = await client.replay(runtime, version, { against, since: flags.since, limit: flags.limit ? Number(flags.limit) : undefined, capUsd: flags.cap ? Number(flags.cap) : undefined });
+        const r = await client.replay(runtime, version, { against, since: flags.since, limit: flags.limit ? Number(flags.limit) : undefined, capUsd: flags.cap ? Number(flags.cap) : undefined, trials: flags.trials ? Number(flags.trials) : undefined });
         show(r, () => {
           const lines = [`Replayed ${r.candidate.cases} cases (${r.sources.testCases} test cases, ${r.sources.labeledDecisions} labeled decisions).`];
           for (const side of [r.candidate, r.baseline]) lines.push(`  v${side.version}: accuracy ${pct(side.accuracy)}, realized loss per 1,000 ${usd(side.realizedLossPer1000Usd)}, cost per 1,000 ${usd(side.costPer1000Usd)}, escalated ${pct(side.escalationShare)}${side.synthetic ? " (simulated)" : ""}`);
@@ -234,6 +234,9 @@ export async function run(argv: string[], env: Record<string, string | undefined
           for (const c of r.changed.slice(0, 10)) {
             const tag = c.outcome ? `[${c.outcome.toUpperCase()}]${c.regression ? " [REGRESSION]" : ""} ` : "";
             lines.push(`  ${tag}${c.source} ${c.case}: ${JSON.stringify(c.baseline)} -> ${JSON.stringify(c.candidate)} (truth ${JSON.stringify(c.truth)})`);
+          }
+          for (const p of (r.regressionPassRates ?? []).filter((x) => x.passed < x.trials)) {
+            lines.push(`  [REGRESSION ${p.flaky ? "FLAKY" : "FAIL"}] ${p.case}: ${p.passed}/${p.trials} trials passed`);
           }
           for (const n of r.notes) lines.push(`Note: ${n}`);
           return lines;

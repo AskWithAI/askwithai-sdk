@@ -233,8 +233,8 @@ describe("the escape hatch: endpoints and call", () => {
     expect(calls[0]!.headers["x-trace"]).toBe("abc");
   });
 
-  it("replay prints fixed/broken flip counts and tags broken regression cases", async () => {
-    const { fetchImpl } = mockFetch({
+  it("replay prints fixed/broken flip counts, tags broken regression cases, and forwards --trials", async () => {
+    const { fetchImpl, calls } = mockFetch({
       "POST /v1/runtimes/acme/refund/versions/2/replay": {
         body: {
           runtime: "acme/refund",
@@ -242,6 +242,7 @@ describe("the escape hatch: endpoints and call", () => {
           candidate: { version: 2, cases: 2, labeledAnswers: 2, accuracy: 0.5, realizedLossPer1000Usd: 10, costPer1000Usd: 0.2, escalationShare: 0.5, synthetic: false },
           baseline: { version: 1, cases: 2, labeledAnswers: 2, accuracy: 0.5, realizedLossPer1000Usd: 10, costPer1000Usd: 0.2, escalationShare: 0.5, synthetic: false },
           flips: { fixed: 1, broken: 1, other: 0, brokenRegressionIds: ["tc_2"] },
+          regressionPassRates: [{ case: "tc_2", passed: 2, trials: 3, flaky: true }],
           changed: [
             { case: "tc_1", source: "test_case", outcome: "fixed", regression: false, candidate: { fraud: "block" }, baseline: { fraud: "approve" }, truth: { fraud: "block" } },
             { case: "tc_2", source: "test_case", outcome: "broken", regression: true, candidate: { fraud: "approve" }, baseline: { fraud: "block" }, truth: { fraud: "block" } },
@@ -252,10 +253,12 @@ describe("the escape hatch: endpoints and call", () => {
         },
       },
     });
-    const r = await cli(fetchImpl, "replay", "--runtime", "acme/refund", "--version", "2");
+    const r = await cli(fetchImpl, "replay", "--runtime", "acme/refund", "--version", "2", "--trials", "3");
     expect(r.code, r.out).toBe(0);
+    expect(calls[0]!.body).toMatchObject({ trials: 3 });
     expect(r.out).toMatch(/2 cases changed answer \(1 fixed, 1 broken\)\./);
     expect(r.out).toMatch(/\[FIXED\] test_case tc_1/);
     expect(r.out).toMatch(/\[BROKEN\] \[REGRESSION\] test_case tc_2/);
+    expect(r.out).toMatch(/\[REGRESSION FLAKY\] tc_2: 2\/3 trials passed/);
   });
 });

@@ -120,6 +120,7 @@ export interface ReplayReport {
   candidate: ReplaySide;
   baseline: ReplaySide;
   flips?: { fixed: number; broken: number; other: number; brokenRegressionIds: string[] };
+  regressionPassRates?: Array<{ case: string; passed: number; trials: number; flaky: boolean }>;
   changed: Array<{ case: string; source: string; outcome?: "fixed" | "broken" | "other"; regression?: boolean; candidate: Record<string, string | null>; baseline: Record<string, string | null>; truth: Record<string, string> }>;
   changedCount: number;
   spentUsd: number;
@@ -310,7 +311,7 @@ export class AskWithAI {
   }
 
   /** Replay a candidate version against the live one on labeled cases. */
-  replay(runtime: string, version: number, opts: { against?: "live" | number; since?: string; limit?: number; capUsd?: number } = {}): Promise<ReplayReport> {
+  replay(runtime: string, version: number, opts: { against?: "live" | number; since?: string; limit?: number; capUsd?: number; trials?: number } = {}): Promise<ReplayReport> {
     return this.request("POST", `/v1/runtimes/${runtime}/versions/${version}/replay`, opts);
   }
 
