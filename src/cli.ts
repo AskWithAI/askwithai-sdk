@@ -45,6 +45,7 @@ Versions and replay
   askwithai versions list    owner/slug
   askwithai versions promote owner/slug <v> [--override-reason x]
   askwithai replay --runtime owner/slug --version 3 [--against live|2] [--since 24h] [--limit 50] [--cap 1] [--trials 3]
+  askwithai compare owner/slug --fast <models> --escalate <models> [--test-set id] [--cap 5] [--fresh] [--json]
 
 Reviews
   askwithai review list <owner/runtime> [--kind ruling|fact|rules_disagree|spot_check|traffic_changed|improvement_ready]
@@ -112,7 +113,7 @@ function writePackage(dir: string, files: Record<string, string>): void {
   }
 }
 
-const BOOLEAN_FLAGS = new Set(["json", "escalate", "disagree", "help"]);
+const BOOLEAN_FLAGS = new Set(["json", "escalate", "disagree", "fresh", "help"]);
 
 export function parseArgs(argv: string[]): { positional: string[]; flags: Record<string, string> } {
   const positional: string[] = [];
@@ -453,6 +454,65 @@ export async function run(argv: string[], env: Record<string, string | undefined
           return 0;
         }
         throw new CliUsageError("Use reviews list or settle.");
+      }
+      case "compare": {
+        const runtime = requireRuntime(sub);
+        const splitList = (raw: string | undefined) =>
+          (raw ?? "")
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+        const fastCandidates = splitList(flags.fast);
+        const escalationCandidates = splitList(flags.escalate);
+        if (!fastCandidates.length && !escalationCandidates.length) {
+          throw new CliUsageError("Give --fast <models> and/or --escalate <models> (comma-separated, e.g. --fast jev,google:gemini-3.1-flash-lite --escalate anthropic:claude-haiku-5-5).");
+        }
+        const started = await client.compareModels(runtime, {
+          testSetId: flags["test-set"],
+          fastCandidates,
+          escalationCandidates,
+          capUsd: flags.cap ? Number(flags.cap) : undefined,
+          forceFresh: flags.fresh === "true",
+        });
+        let cmp = await client.getComparison(runtime, started.id);
+        const deadline = Date.now() + 120_000;
+        while ((cmp.status === "queued" || cmp.status === "running") && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 1000));
+          cmp = await client.getComparison(runtime, started.id);
+        }
+        show(cmp, () => {
+          const lines: string[] = [];
+          lines.push(`Comparison ${cmp.id} (${cmp.status}) · ${cmp.cachedCalls} cached · ${cmp.freshCalls} fresh · spent ${usd(cmp.spentUsd)}`);
+          if (cmp.status === "failed") {
+            lines.push(`Failed: ${cmp.error ?? "unknown error"}`);
+            return lines;
+          }
+          const report = cmp.report;
+          if (!report) {
+            lines.push("Still running; check again with askwithai call GET /v1/runtimes/<owner>/<slug>/comparisons/<id>.");
+            return lines;
+          }
+          lines.push(`Source: ${report.source.toUpperCase()} (${report.splits.holdout ?? 0} routine, ${report.splits.hard ?? 0} hard)`);
+          if (report.takeaway) {
+            lines.push(
+              `Takeaway: ${report.takeaway.pairingLabel} escalated ${Math.round(report.takeaway.routineEscalationShare * 100)}% of routine cases and ${Math.round(report.takeaway.hardEscalationShare * 100)}% of hard cases automatically.`,
+            );
+          }
+          lines.push("");
+          lines.push("Pairing | Confidence | Routine cases | Hard cases");
+          const fmtSplit = (m: { n: number; lossPer1000: number; costPer1000: number; escalationShare: number }, showEsc: boolean) => {
+            if (!m.n) return "—";
+            const esc = showEsc ? ` · ${Math.round(m.escalationShare * 100)}% esc` : "";
+            return `$${m.lossPer1000.toFixed(0)}/1k loss · $${m.costPer1000.toFixed(3)}/1k spend${esc} (n=${m.n})`;
+          };
+          for (const row of report.rows) {
+            const conf = row.confidence ? (row.confidence.honest ? "Honest" : "Overconfident") : "—";
+            const tag = row.isCurrent ? " [current]" : "";
+            lines.push(`${row.label}${tag} | ${conf} | ${fmtSplit(row.routine, row.kind === "pair")} | ${fmtSplit(row.hard, row.kind === "pair")}`);
+          }
+          return lines;
+        });
+        return cmp.status === "failed" ? 1 : 0;
       }
       case "learn": {
         const runtime = requireRuntime(sub);

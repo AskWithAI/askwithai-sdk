@@ -259,6 +259,43 @@ export interface ExpertReviewItem {
   createdAt: string;
 }
 
+export interface ModelComparisonSplitMetrics {
+  n: number;
+  lossPer1000: number;
+  costPer1000: number;
+  accuracy: number;
+  escalationShare: number;
+  p95LatencyMs: number;
+}
+
+export interface ModelComparisonRow {
+  id: string;
+  kind: "pair" | "fast_only" | "escalation_only";
+  label: string;
+  isCurrent: boolean;
+  confidence: { honest: boolean; confidentWrongShare: number | null; adaptiveEceAfter: number | null; n: number } | null;
+  routine: ModelComparisonSplitMetrics;
+  hard: ModelComparisonSplitMetrics;
+}
+
+export interface ModelComparison {
+  id: string;
+  status: "queued" | "running" | "done" | "failed";
+  testSetId: string;
+  estimateUsd: number;
+  spentUsd: number;
+  freshCalls: number;
+  cachedCalls: number;
+  forceFresh: boolean;
+  error?: string | null;
+  report?: {
+    source: "synthetic" | "recorded" | "live";
+    splits: Record<string, number>;
+    rows: ModelComparisonRow[];
+    takeaway: { pairingLabel: string; routineEscalationShare: number; hardEscalationShare: number; routineN: number; hardN: number } | null;
+  } | null;
+}
+
 export class AskWithAI {
   readonly baseUrl: string;
   private readonly baseOrigin: string;
@@ -465,6 +502,31 @@ export class AskWithAI {
   /** Replay a candidate version against the live one on labeled cases. */
   async replay(runtime: string, version: number, opts: { against?: "live" | number; since?: string; limit?: number; capUsd?: number; trials?: number } = {}): Promise<ReplayReport> {
     return this.request("POST", `/v1/runtimes/${runtimePath(runtime)}/versions/${version}/replay`, opts);
+  }
+
+  /** Compare candidate fast models and second-opinion models on the same test set, reusing cached answers unless `forceFresh` is true. */
+  compareModels(
+    runtime: string,
+    opts: {
+      testSetId?: string;
+      fastCandidates: Array<string | Record<string, unknown>>;
+      escalationCandidates: Array<string | Record<string, unknown>>;
+      capUsd?: number;
+      forceFresh?: boolean;
+      dryRun?: boolean;
+    },
+  ): Promise<{ id: string; status: string; estimateUsd: number; freshCalls: number; cachedCalls: number; cases: number }> {
+    return this.request("POST", `/v1/runtimes/${runtimePath(runtime)}/comparisons`, opts);
+  }
+
+  /** List model comparisons for a runtime, newest first. */
+  listComparisons(runtime: string) {
+    return this.request<{ data: ModelComparison[] }>("GET", `/v1/runtimes/${runtimePath(runtime)}/comparisons`);
+  }
+
+  /** Read one model comparison run and its scored report. */
+  getComparison(runtime: string, id: string): Promise<ModelComparison> {
+    return this.request("GET", `/v1/runtimes/${runtimePath(runtime)}/comparisons/${encodeURIComponent(id)}`);
   }
 
   /** Every immutable version of a runtime, newest first. */
