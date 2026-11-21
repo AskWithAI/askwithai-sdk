@@ -502,9 +502,14 @@ export class AskWithAI {
     return this.request<Record<string, unknown>>("POST", `/v1/runtimes/${runtimePath(runtime)}/learned/${encodeURIComponent(id)}/${action}`, opts);
   }
 
+  /** Workspace handle, demo mode, and guided-start starting path. */
+  workspace() {
+    return this.request<{ id: string; handle: string; name: string; demoMode: boolean; startingPath: string | null }>("GET", "/v1/workspace");
+  }
+
   /** Runtime templates, including app templates not yet available. */
   listTemplates() {
-    return this.request<{ data: Array<{ id: string; name: string; available: boolean } & Record<string, unknown>> }>("GET", "/v1/templates");
+    return this.request<{ data: Array<{ id: string; name: string; category?: string; costliestMistake?: string; cases?: number; available: boolean } & Record<string, unknown>> }>("GET", "/v1/templates");
   }
 
   /** Create a runtime from a template, with its synthetic cases as a test set. */

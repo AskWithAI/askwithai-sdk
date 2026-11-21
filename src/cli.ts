@@ -476,10 +476,61 @@ export async function run(argv: string[], env: Record<string, string | undefined
         }
         throw new CliUsageError("Use learned list, promote or discard.");
       }
+      case "init": {
+        const ws = await client.workspace();
+        const nextSteps: Record<string, string[]> = {
+          decisionModel: [
+            "1. Create a runtime from a template or push your package: askwithai push --runtime <owner>/<slug>",
+            "2. Start in parity so answers stay identical: askwithai mode <owner>/<slug> parity",
+            "3. Point your existing decision-model client at AskWithAI, then switch to shadow mode.",
+          ],
+          reasoningModel: [
+            "1. Create a runtime from a template: askwithai templates use <id>",
+            "2. Benchmark on your cases and check the trade-off curve: askwithai templates evaluate <owner>/<slug>",
+            "3. Call it from your app with createDecision() from @askwithai/sdk.",
+          ],
+          rules: [
+            "1. Put your plain-code rules in askwithai/runtime.yaml (rules + combine) and push: askwithai push --runtime <owner>/<slug>",
+            "2. Add yes/no checks for the cases your rules do not cover.",
+            "3. Replay against labeled cases: askwithai replay --runtime <owner>/<slug> --version 2",
+          ],
+          people: [
+            "1. Add a person tier to runtime.yaml and push: askwithai push --runtime <owner>/<slug>",
+            "2. Settle escalated cases from the terminal or Platform Expert Review: askwithai review list <owner>/<slug>",
+          ],
+          none: [
+            "1. Browse templates: askwithai templates list",
+            "2. Create one: askwithai templates use payment-refund",
+            "3. Send your first decision: askwithai decide <owner>/payment-refund --input '{...}'",
+          ],
+        };
+        const pathKey = ws.startingPath && ws.startingPath in nextSteps ? ws.startingPath : "none";
+        show(ws, () => [
+          `Workspace: ${ws.name} (${ws.handle})${ws.demoMode ? " · DEMO MODE" : ""}`,
+          `Starting path: ${ws.startingPath ?? "not set (run guided start in the Platform)"}`,
+          ...nextSteps[pathKey]!,
+        ]);
+        return 0;
+      }
       case "templates": {
         if (sub === "list") {
           const r = await client.listTemplates();
-          show(r, () => r.data.map((t) => `${t.id}  ${t.name}${t.available ? "" : "  (not available yet)"}`));
+          show(r, () => {
+            const groups = new Map<string, typeof r.data>();
+            for (const t of r.data) {
+              const cat = t.category ?? "other";
+              groups.set(cat, [...(groups.get(cat) ?? []), t]);
+            }
+            const lines: string[] = [];
+            for (const [cat, items] of groups) {
+              lines.push(`[${cat}]`);
+              for (const t of items) {
+                const extra = [t.cases ? `${t.cases} cases` : null, t.costliestMistake ? `costliest: ${t.costliestMistake}` : null, t.available ? null : "not available yet"].filter(Boolean).join(" · ");
+                lines.push(`  ${t.id}  ${t.name}${extra ? `  (${extra})` : ""}`);
+              }
+            }
+            return lines;
+          });
           return 0;
         }
         if (sub === "use") {
