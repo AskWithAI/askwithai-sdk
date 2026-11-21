@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readdirSync, readFileSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { AskWithAI, AskWithAIError, type Decision, type ServingMode } from "./client";
+import { AskWithAI, AskWithAIError, type Decision, type ExpertReviewKind, type ServingMode } from "./client";
 
 /*
  * `askwithai`: call the full Decision API from a terminal or a script.
@@ -46,6 +46,9 @@ Versions and replay
   askwithai replay --runtime owner/slug --version 3 [--against live|2] [--since 24h] [--limit 50] [--cap 1] [--trials 3]
 
 Reviews
+  askwithai review list <owner/runtime> [--kind ruling|fact|rules_disagree|spot_check|traffic_changed|improvement_ready]
+  askwithai review show <owner/runtime> <itemId>
+  askwithai review settle <owner/runtime> <itemId> --answer x [--reason x]   (rulings and missing facts)
   askwithai reviews list [--status pending|settled|expired]
   askwithai reviews settle <reviewId> --decision x --expected-version n [--reason x]
 
@@ -385,6 +388,31 @@ export async function run(argv: string[], env: Record<string, string | undefined
           return 0;
         }
         throw new CliUsageError("Use versions list or promote.");
+      }
+      case "review": {
+        // Expert Review for one runtime; rulings and missing facts can be settled from here.
+        const runtime = requireRuntime(rest[0]);
+        if (sub !== "list" && sub !== "show" && sub !== "settle") throw new CliUsageError("Use review list, show or settle.");
+        const items = (await client.expertReview(runtime, sub === "list" ? (flags.kind as ExpertReviewKind | undefined) : undefined)).data;
+        const money = (n: number | null) => (n === null ? "" : `  at stake $${n.toFixed(2)}`);
+        if (sub === "list") {
+          show({ data: items }, () => (items.length ? items.map((i) => `${i.id}  ${i.kind}  ${i.title}${money(i.costAtStake)}${i.deadline ? `  deadline=${i.deadline}` : ""}`) : ["Nothing to review right now."]));
+          return 0;
+        }
+        if (!rest[1]) throw new CliUsageError("Give the item id (from review list).");
+        const item = items.find((i) => i.id === rest[1]);
+        if (!item) throw new CliUsageError(`No open item ${rest[1]} in ${runtime}.`);
+        if (sub === "show") {
+          show(item, () => [item.title, item.explanation, ...(item.options.length ? [`Answers: ${item.options.join(", ")}`] : []), ...(item.receiptRef ? [`Receipt: askwithai status ${item.receiptRef}`] : []), ...item.actions.map((a) => `${a.label}: ${a.method} ${a.path}${a.platformOnly ? " (in the AskWithAI Platform)" : ""}`)]);
+          return 0;
+        }
+        if (!flags.answer) throw new CliUsageError("Give --answer.");
+        let r: unknown;
+        if (item.kind === "ruling") r = await client.settleReview(item.id, { decision: flags.answer, reason: flags.reason, expectedVersion: item.expectedVersion ?? 0 });
+        else if (item.kind === "fact") r = await client.answerInput(item.receiptRef!, { field: item.field, value: flags.answer, expectedVersion: item.expectedVersion });
+        else throw new CliUsageError(item.kind === "improvement_ready" ? "Release it with learned promote, or discard it with learned discard." : "This kind is settled in the AskWithAI Platform.");
+        show(r, () => [JSON.stringify(r)]);
+        return 0;
       }
       case "reviews": {
         if (sub === "list") {

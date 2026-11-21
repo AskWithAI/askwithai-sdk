@@ -193,6 +193,24 @@ function runtimePath(runtime: string): string {
   return `${encodeURIComponent(owner!)}/${encodeURIComponent(slug!)}${version ? `@${encodeURIComponent(version)}` : ""}`;
 }
 
+export type ExpertReviewKind = "ruling" | "fact" | "rules_disagree" | "spot_check" | "traffic_changed" | "improvement_ready";
+
+/** One item in a runtime's Expert Review. Settle it on the route its `actions` name. */
+export interface ExpertReviewItem {
+  id: string;
+  kind: ExpertReviewKind;
+  title: string;
+  explanation: string;
+  costAtStake: number | null;
+  deadline: string | null;
+  receiptRef: string | null;
+  options: string[];
+  expectedVersion?: number;
+  field?: string;
+  actions: Array<{ label: string; method: "GET" | "POST"; path: string; platformOnly?: boolean }>;
+  createdAt: string;
+}
+
 export class AskWithAI {
   readonly baseUrl: string;
   private readonly baseOrigin: string;
@@ -310,6 +328,15 @@ export class AskWithAI {
 
   settleReview(id: string, body: { decision: string; reason?: string; expectedVersion: number }) {
     return this.request("POST", `/v1/reviews/${encodeURIComponent(id)}/settle`, body);
+  }
+
+  /**
+   * Expert Review for one runtime: everything only a person can settle
+   * (rulings, missing facts, stress-test questions, spot checks, traffic
+   * changes, ready improvements), money at stake first.
+   */
+  expertReview(runtime: string, kind?: ExpertReviewKind) {
+    return this.request<{ data: ExpertReviewItem[] }>("GET", `/v1/runtimes/${runtimePath(runtime)}/reviews${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`);
   }
 
   /** Every runtime in the key's workspace. */

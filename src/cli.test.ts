@@ -165,6 +165,29 @@ describe("reviews, learning and templates", () => {
     expect(calls[1]!.body).toMatchObject({ decision: "block", expectedVersion: 1 });
   });
 
+  it("review list, show and settle (Expert Review for one runtime)", async () => {
+    const items = [
+      { id: "rev_1", kind: "ruling", title: "Is this payment fraud?", explanation: "The models were unsure.", costAtStake: 640, deadline: "2026-12-01T00:00:00Z", receiptRef: "dec_1", options: ["block", "approve"], expectedVersion: 0, actions: [{ label: "Settle", method: "POST", path: "/v1/reviews/rev_1/settle" }], createdAt: "2026-11-21T00:00:00Z" },
+      { id: "rev_2", kind: "fact", title: "Which channel?", explanation: "Waiting for one fact.", costAtStake: null, deadline: "2026-12-01T00:00:00Z", receiptRef: "dec_2", options: ["web", "store"], expectedVersion: 3, field: "channel", actions: [{ label: "Answer", method: "POST", path: "/v1/decisions/dec_2/input" }], createdAt: "2026-11-21T00:00:00Z" },
+      { id: "dl_1", kind: "rules_disagree", title: "Is this payment fraud? (amount near 500)", explanation: "Models read your rules differently.", costAtStake: null, deadline: null, receiptRef: null, options: ["block", "approve"], actions: [{ label: "Settle", method: "POST", path: "/api/studio/council/deadlocks/dl_1/settle", platformOnly: true }], createdAt: "2026-11-21T00:00:00Z" },
+    ];
+    const { fetchImpl, calls } = mockFetch({
+      "GET /v1/runtimes/acme/refund/reviews": { body: { data: items } },
+      "POST /v1/reviews/rev_1/settle": { body: { id: "rev_1", status: "settled" } },
+      "POST /v1/decisions/dec_2/input": { body: { id: "dec_2", status: "decided" } },
+    });
+    const list = await cli(fetchImpl, "review", "list", "acme/refund", "--kind", "ruling");
+    expect(calls[0]).toMatchObject({ path: "/v1/runtimes/acme/refund/reviews", search: "?kind=ruling" });
+    expect(list.out).toMatch(/rev_1\s+ruling\s+Is this payment fraud\?\s+at stake \$640\.00/);
+    expect((await cli(fetchImpl, "review", "show", "acme/refund", "dl_1")).out).toMatch(/in the AskWithAI Platform/);
+    await cli(fetchImpl, "review", "settle", "acme/refund", "rev_1", "--answer", "block", "--reason", "Known fraud ring");
+    expect(calls.at(-1)!.body).toMatchObject({ decision: "block", reason: "Known fraud ring", expectedVersion: 0 });
+    await cli(fetchImpl, "review", "settle", "acme/refund", "rev_2", "--answer", "web");
+    expect(calls.at(-1)).toMatchObject({ method: "POST", path: "/v1/decisions/dec_2/input", body: { field: "channel", value: "web", expectedVersion: 3 } });
+    const refused = await cli(fetchImpl, "review", "settle", "acme/refund", "dl_1", "--answer", "block");
+    expect(refused.code).not.toBe(0);
+  });
+
   it("learn, learned list/promote/discard", async () => {
     const { fetchImpl, calls } = mockFetch({
       "POST /v1/runtimes/acme/refund/learn": { status: 201, body: { id: "cand_1" } },
