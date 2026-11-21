@@ -203,6 +203,34 @@ export type ExpertReviewKind = "ruling" | "fact" | "rules_disagree" | "spot_chec
 /** Where a number comes from: demo answers, a recorded run by the AskWithAI team, or real traffic. */
 export type NumberSource = "synthetic" | "recorded" | "live";
 
+/** One lane of `POST /v1/decisions/{id}/compare`. `status` other than "ok" says why the lane is empty. */
+export interface CompareLane {
+  lane: "fast" | "reasoning" | "askwithai";
+  status: "ok" | "needs_input" | "over_cap" | "not_configured" | "failed";
+  from: "decision" | "shadow" | "call" | null;
+  tier: string | null;
+  model: string | null;
+  answers: Record<string, { answer: string | null; probability: number | null }>;
+  path: string | null;
+  latencyMs: number | null;
+  costUsd: number | null;
+  costBasis: "reported" | "estimate" | "unknown" | null;
+  /** True when the cost is a list-price estimate for demo answers, not money spent. */
+  estimated: boolean;
+  source: NumberSource | null;
+  error?: string;
+}
+
+export interface DecisionCompare {
+  object: "decision_compare";
+  decisionId: string;
+  questions: string[];
+  /** Always fast, reasoning, askwithai, in that order. */
+  lanes: [CompareLane, CompareLane, CompareLane];
+  chargedUsd: number;
+  recordedRun: { date: string; models: Record<string, string>; cases: number } | null;
+}
+
 /** `GET /v1/runtimes/{owner}/{runtime}/scorecard`. A card's `source` is null when there is not enough data; its `summary` then says what will fill it. */
 export interface Scorecard {
   object: "scorecard";
@@ -386,6 +414,17 @@ export class AskWithAI {
   async listDecisions(runtime: string, filters: { status?: string; answeredBy?: string; traceId?: string; since?: string; before?: string; disagree?: boolean; limit?: number } = {}) {
     const q = new URLSearchParams(Object.entries(filters).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)]));
     return this.request<{ data: Decision[]; hasMore: boolean }>("GET", `/v1/runtimes/${runtimePath(runtime)}/decisions${q.size ? `?${q}` : ""}`);
+  }
+
+  /**
+   * One decision answered three ways: the fast model alone, the reasoning
+   * model alone, and what AskWithAI did. A lane the decision did not take is
+   * read from shadow mode or a recorded run when possible; otherwise it costs
+   * one call, refused above `capUsd` (default $0.05). Inputs are not stored by
+   * default, so pass the same `input` again to let that call run.
+   */
+  compare(decisionId: string, opts: { input?: Record<string, unknown>; capUsd?: number } = {}) {
+    return this.request<DecisionCompare>("POST", `/v1/decisions/${encodeURIComponent(decisionId)}/compare`, opts);
   }
 
   /**
