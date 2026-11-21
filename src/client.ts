@@ -207,6 +207,8 @@ export interface ExpertReviewItem {
   options: string[];
   expectedVersion?: number;
   field?: string;
+  /** What a person needs to see to answer (a review's redacted input), or null when it was not kept. */
+  input?: unknown;
   actions: Array<{ label: string; method: "GET" | "POST"; path: string; platformOnly?: boolean }>;
   createdAt: string;
 }
