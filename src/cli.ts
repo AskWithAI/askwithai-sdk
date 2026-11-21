@@ -160,7 +160,9 @@ function parsePairs(raw: string | undefined, primary: "=" | ":" = "="): Record<s
 }
 
 function summarizeDecision(d: Decision): string[] {
-  const lines = [`${d.id}  ${d.status}  path=${d.path}  serving=${d.servingMode}  cost=${usd(d.costUsd)}${d.costUnknownCalls ? ` (${d.costUnknownCalls} unknown)` : ""}`];
+  // The plain-language summary goes above the trace when the server sends one.
+  const summary = d.receipt?.summary ? [d.receipt.summary] : [];
+  const lines = [...summary, `${d.id}  ${d.status}  path=${d.path}  serving=${d.servingMode}  cost=${usd(d.costUsd)}${d.costUnknownCalls ? ` (${d.costUnknownCalls} unknown)` : ""}`];
   for (const [key, a] of Object.entries(d.decisions ?? {})) lines.push(`  ${key}: ${a.answer ?? "(none yet)"}  by=${a.answeredBy}${a.final ? "" : " (provisional)"}${a.probability !== null ? `  p=${a.probability}` : ""}`);
   for (const r of d.inputRequests ?? []) lines.push(`  waiting for input: ${r.field} — ${r.question}`);
   for (const r of d.reviews ?? []) lines.push(`  waiting for a person: ${r.question} (deadline ${r.deadlineAt})`);

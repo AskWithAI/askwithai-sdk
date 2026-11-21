@@ -2,6 +2,7 @@
  * @askwithai/sdk: call AskWithAI Decision Runtimes from your app.
  *
  * - `AskWithAI`: the client for the Decision API.
+ * - `formatReceipt`: a receipt as short plain lines (summary, three steps, time and cost).
  * - `createDecision`: a typed decision function with schema checks, `verify()`, `escalateIf` and shadow adoption.
  * - `@askwithai/sdk/testing`: `createFauxAskWithAI()`, an in-process stand-in for tests.
  * - `@askwithai/sdk/cli`: the `run()` function behind the `askwithai` command, importable directly.
@@ -9,3 +10,4 @@
  */
 export * from "./client";
 export * from "./decision";
+export * from "./receipt";

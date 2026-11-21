@@ -14,10 +14,11 @@ Node 22 or later.
 ## Quick example
 
 ```ts
-import { AskWithAI } from "@askwithai/sdk";
+import { AskWithAI, formatReceipt } from "@askwithai/sdk";
 
 const askwithai = new AskWithAI({ apiKey: process.env.ASKWITHAI_API_KEY! });
 const d = await askwithai.decide("acme/refund-check", { input: { amount: 42 }, idempotencyKey: orderId });
+console.log(formatReceipt(d).join("\n")); // the plain-language summary, three steps, time and cost
 ```
 
 The `askwithai` command covers the full Decision API — decisions, runtimes, versions, reviews,

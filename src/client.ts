@@ -35,6 +35,20 @@ export interface DecisionQuestionReceipt {
   reason: string;
   warnings: string[];
   citations: DecisionCitation[];
+  /** This question's steps in plain words (servers from November 2026 on). */
+  explanation?: ReceiptExplanation;
+}
+
+/** A receipt's three steps in plain words, built by the server's routing code, not by a model. */
+export interface ReceiptExplanation {
+  /** Step 1: what the fast model said and how sure it was. */
+  quickCheck: string;
+  /** Step 2: whether a second opinion was worth its price, given what a mistake would cost. */
+  costCheck: string;
+  /** Step 3: what the second opinion said, or why none was needed. */
+  secondLook: string;
+  /** The final answer, or what the decision is waiting for. */
+  answer: string;
 }
 
 /** Where a cost came from. An unknown cost is null, never 0. */
@@ -71,6 +85,12 @@ export interface Decision {
   servingMode: ServingMode;
   shadowResult: Record<string, unknown> | null;
   receipt: {
+    /** One plain sentence saying what was decided and how (servers from November 2026 on). */
+    summary?: string;
+    /** The first question's three steps in plain words. */
+    explanation?: ReceiptExplanation | null;
+    /** Demo-mode calls only: what the same calls would cost at the runtime's list prices. */
+    estimatedCostUsd?: number | null;
     questions: Record<string, DecisionQuestionReceipt>;
     tierCalls: Array<{ tier: string; kind: string; model: string; ok: boolean; latencyMs: number; costUsd: number | null; costBasis: CostBasis; error?: string }>;
     budget: { limitUsd: number | null; spentUsd: number; applied: "per_decision" | "daily_cap" | null; onBudget: string } | null;

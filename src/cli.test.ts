@@ -53,6 +53,14 @@ describe("decisions", () => {
     expect(r.out).toMatch(/fraud: block\s+by=fast/);
   });
 
+  it("decide prints the receipt's plain-language summary above the trace", async () => {
+    const withSummary = { ...DECISION, receipt: { summary: "The fast model answered block (90% sure) on its own.", questions: {}, tierCalls: [], budget: null } };
+    const { fetchImpl } = mockFetch({ "POST /v1/decide/acme/refund": { body: withSummary } });
+    const r = await cli(fetchImpl, "decide", "acme/refund", "--input", '{"amount":42}');
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toMatch(/^The fast model answered block \(90% sure\) on its own\.\ndec_1\s+decided/);
+  });
+
   it("decide rejects input that is not JSON", async () => {
     const { fetchImpl } = mockFetch({});
     const r = await cli(fetchImpl, "decide", "acme/refund", "--input", "{not json");
