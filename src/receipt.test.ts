@@ -19,6 +19,16 @@ describe("formatReceipt", () => {
     const lines = formatReceipt({ receipt: { estimatedCostUsd: 0.01806, questions: {}, tierCalls: [], budget: null }, latencyMs: 40, costUsd: 0, costUnknownCalls: 0, synthetic: true });
     expect(lines).toEqual(["40 ms · $0.0181 (estimated at list prices; simulated)"]);
   });
+  it("labels recorded runs with their date and case count and uses the real recorded cost", () => {
+    const lines = formatReceipt({
+      receipt: { source: "recorded", recordedRun: { date: "2026-11-21", models: { fast: "jev-1.13.0" }, cases: 12 }, questions: {}, tierCalls: [], budget: null },
+      latencyMs: 121,
+      costUsd: 0.0002,
+      costUnknownCalls: 0,
+      synthetic: true,
+    });
+    expect(lines).toEqual(["121 ms · $0.0002 · RECORDED (2026-11-21, 12 cases)"]);
+  });
   it("never shows an unknown cost as $0", () => {
     expect(formatReceipt({ receipt: { questions: {}, tierCalls: [], budget: null }, latencyMs: 10, costUsd: null, costUnknownCalls: 1, synthetic: false })).toEqual(["10 ms · unknown (1 call)"]);
   });

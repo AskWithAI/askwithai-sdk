@@ -85,11 +85,15 @@ export interface Decision {
   servingMode: ServingMode;
   shadowResult: Record<string, unknown> | null;
   receipt: {
+    /** Where the answers came from: synthetic (demo models), recorded (real run by the AskWithAI team), or live (your traffic). */
+    source?: "synthetic" | "recorded" | "live";
+    /** Provenance of the recorded run when `source` is "recorded". */
+    recordedRun?: { date: string; models: Record<string, string>; cases: number } | null;
     /** One plain sentence saying what was decided and how (servers from November 2026 on). */
     summary?: string;
     /** The first question's three steps in plain words. */
     explanation?: ReceiptExplanation | null;
-    /** Demo-mode calls only: what the same calls would cost at the runtime's list prices. */
+    /** Synthetic demo-mode calls only: what the same calls would cost at the runtime's list prices. */
     estimatedCostUsd?: number | null;
     questions: Record<string, DecisionQuestionReceipt>;
     tierCalls: Array<{ tier: string; kind: string; model: string; ok: boolean; latencyMs: number; costUsd: number | null; costBasis: CostBasis; error?: string }>;

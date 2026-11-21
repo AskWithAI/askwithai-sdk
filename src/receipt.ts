@@ -22,7 +22,19 @@ export function formatReceipt(d: Pick<Decision, "receipt" | "latencyMs" | "costU
     lines.push(`3. ${RECEIPT_STEPS.secondLook}  ${r.explanation.secondLook}`);
     lines.push(r.explanation.answer);
   }
-  const cost = d.costUsd === null ? `unknown (${d.costUnknownCalls} ${d.costUnknownCalls === 1 ? "call" : "calls"})` : d.synthetic && r.estimatedCostUsd ? `${usd(r.estimatedCostUsd)} (estimated at list prices; simulated)` : usd(d.costUsd);
-  lines.push(`${seconds(d.latencyMs)} · ${cost}`);
+  const source = r.source ?? (d.synthetic ? "synthetic" : "live");
+  const cost =
+    d.costUsd === null
+      ? `unknown (${d.costUnknownCalls} ${d.costUnknownCalls === 1 ? "call" : "calls"})`
+      : source === "synthetic" && r.estimatedCostUsd
+        ? `${usd(r.estimatedCostUsd)} (estimated at list prices; simulated)`
+        : usd(d.costUsd);
+  const tag =
+    source === "recorded"
+      ? r.recordedRun
+        ? ` · RECORDED (${r.recordedRun.date}, ${r.recordedRun.cases} cases)`
+        : " · RECORDED"
+      : "";
+  lines.push(`${seconds(d.latencyMs)} · ${cost}${tag}`);
   return lines;
 }
