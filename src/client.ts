@@ -200,6 +200,20 @@ function runtimePath(runtime: string): string {
 export type ExpertReviewKind = "ruling" | "fact" | "rules_disagree" | "spot_check" | "traffic_changed" | "improvement_ready";
 
 /** One item in a runtime's Expert Review. Settle it on the route its `actions` name. */
+/** Where a number comes from: demo answers, a recorded run by the AskWithAI team, or real traffic. */
+export type NumberSource = "synthetic" | "recorded" | "live";
+
+/** `GET /v1/runtimes/{owner}/{runtime}/scorecard`. A card's `source` is null when there is not enough data; its `summary` then says what will fill it. */
+export interface Scorecard {
+  object: "scorecard";
+  runtime: string;
+  stage: "designed" | "testing" | "live";
+  window: { days: number; since: string };
+  fast: { source: NumberSource | null; answeredAloneShare: number | null; costPer1000: number | null; p95Ms: number | null; n: number; summary: string; nextStep: string };
+  accurate: { source: NumberSource | null; confidence: "honest" | "overconfident" | null; stated: number | null; observed: number | null; n: number; openDisagreements: number; segment: string | null; summary: string; nextStep: string };
+  improving: { rulings: number; improvementsReady: number; summary: string; nextStep: string };
+}
+
 export interface ExpertReviewItem {
   id: string;
   kind: ExpertReviewKind;
@@ -372,6 +386,16 @@ export class AskWithAI {
   async listDecisions(runtime: string, filters: { status?: string; answeredBy?: string; traceId?: string; since?: string; before?: string; disagree?: boolean; limit?: number } = {}) {
     const q = new URLSearchParams(Object.entries(filters).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)]));
     return this.request<{ data: Decision[]; hasMore: boolean }>("GET", `/v1/runtimes/${runtimePath(runtime)}/decisions${q.size ? `?${q}` : ""}`);
+  }
+
+  /**
+   * The three promises for one runtime: fast (answered alone, cost, speed),
+   * accurate (is confidence honest), improving (rulings that became test
+   * cases, improvements ready), each with a sentence, its sample size and a
+   * next step.
+   */
+  scorecard(runtime: string, window: "7d" | "30d" = "7d") {
+    return this.request<Scorecard>("GET", `/v1/runtimes/${runtimePath(runtime)}/scorecard?window=${window}`);
   }
 
   async stats(runtime: string, window: "1h" | "24h" | "7d" | "30d" = "24h") {

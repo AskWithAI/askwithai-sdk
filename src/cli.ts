@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readdirSync, readFileSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { AskWithAI, AskWithAIError, type Decision, type ExpertReviewKind, type ServingMode } from "./client";
+import { AskWithAI, AskWithAIError, type Decision, type ExpertReviewKind, type Scorecard, type ServingMode } from "./client";
 
 /*
  * `askwithai`: call the full Decision API from a terminal or a script.
@@ -26,6 +26,7 @@ Decisions
   askwithai decide owner/slug --input '{"...": ...}' [--version n] [--escalate] [--serving parity|shadow]
                     [--wait-ms n] [--trace-id x] [--request-id x] [--idempotency-key x] [--callback-url x]
   askwithai status <decisionId>                                fetch a decision and its timeline
+  askwithai status owner/slug [--window 7d|30d]                the runtime's scorecard: fast, accurate, improving
   askwithai input  <decisionId> --field f --value v [--expected-version n]   answer a fact it's waiting for
   askwithai resume <decisionId> --raise-budget 5               resume a decision paused by its budget
   askwithai outcome <decisionId> --labels '{"key":"label"}' [--key x] [--note x]   report what really happened
@@ -172,6 +173,21 @@ function summarizeDecision(d: Decision): string[] {
   return lines;
 }
 
+/** The three promise sentences, each with where its number comes from and the next step. */
+function formatScorecard(s: Scorecard): string[] {
+  const src = (x: string | null) => (x ? ` [${x === "synthetic" ? "SIMULATED" : x.toUpperCase()}]` : "");
+  const confidence = s.accurate.confidence ? `Confidence: ${s.accurate.confidence}. ` : "";
+  return [
+    `${s.runtime}  stage=${s.stage}  last ${s.window.days} days`,
+    `  Fast       ${s.fast.summary}${src(s.fast.source)}`,
+    `             next: ${s.fast.nextStep}`,
+    `  Accurate   ${confidence}${s.accurate.summary}${s.accurate.confidence ? ` (${s.accurate.n} checked)` : ""}${src(s.accurate.source)}`,
+    `             next: ${s.accurate.nextStep}`,
+    `  Improving  ${s.improving.summary}`,
+    `             next: ${s.improving.nextStep}`,
+  ];
+}
+
 /** A bad command, a bad flag, or a bad argument. Exits 2, like a missing API key. */
 class CliUsageError extends Error {}
 
@@ -290,7 +306,14 @@ export async function run(argv: string[], env: Record<string, string | undefined
         return 0;
       }
       case "status": {
-        if (!sub) throw new CliUsageError("Give the decision id.");
+        if (!sub) throw new CliUsageError("Give the decision id, or owner/slug for a runtime's scorecard.");
+        if (RUNTIME_RE.test(sub)) {
+          const w = flags.window ?? "7d";
+          if (w !== "7d" && w !== "30d") throw new CliUsageError("--window must be 7d or 30d.");
+          const s = await client.scorecard(sub, w);
+          show(s, () => formatScorecard(s));
+          return 0;
+        }
         const d = await client.getDecision(sub);
         show(d, () => summarizeDecision(d));
         return 0;
