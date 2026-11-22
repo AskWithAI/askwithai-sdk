@@ -250,6 +250,75 @@ describe("the escape hatch: endpoints and call", () => {
     expect(filtered.out).not.toMatch(/decide/);
   });
 
+  it("status owner/slug reads scorecard while status <decisionId> still reads a decision", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /v1/runtimes/acme/refund/scorecard": {
+        body: {
+          runtime: "acme/refund",
+          stage: "live",
+          window: { days: 7 },
+          fast: { summary: "80% answered alone on 40 decisions.", n: 40, source: "live", nextStep: "Keep monitoring." },
+          accurate: { summary: "Confidence: honest.", n: 40, confidence: "honest", source: "live", nextStep: "Run a spot check." },
+          improving: { summary: "2 rulings this week.", n: 2, nextStep: "Review learned rules." },
+        },
+      },
+      "GET /v1/decisions/dec_99": { body: { id: "dec_99", status: "decided", path: "fast", servingMode: "active", costUsd: 0, decisions: {} } },
+    });
+    const sc = await cli(fetchImpl, "status", "acme/refund");
+    expect(sc.code).toBe(0);
+    expect(calls[0]!.path).toBe("/v1/runtimes/acme/refund/scorecard");
+    expect(sc.out).toMatch(/80% answered alone/);
+    const dec = await cli(fetchImpl, "status", "dec_99");
+    expect(dec.code).toBe(0);
+    expect(calls[1]!.path).toBe("/v1/decisions/dec_99");
+  });
+
+  it("init reads workspace startingPath and compare starts a model comparison", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /v1/workspace": { body: { id: "ws_1", handle: "acme", demoMode: true, startingPath: "reasoningModel" } },
+      "POST /v1/runtimes/acme/refund/comparisons": {
+        status: 201,
+        body: { id: "mc_1", status: "done", estimateUsd: 0, cachedCalls: 10, freshCalls: 5 },
+      },
+      "GET /v1/runtimes/acme/refund/comparisons/mc_1": {
+        body: {
+          id: "mc_1",
+          status: "done",
+          cachedCalls: 10,
+          freshCalls: 5,
+          spentUsd: 0,
+          report: {
+            source: "synthetic",
+            splits: { holdout: 25, hard: 5 },
+            rows: [
+              {
+                id: "p1",
+                label: "Jev v1 + Claude Haiku 5.5",
+                kind: "pairing",
+                isCurrent: true,
+                confidence: { status: "honest", label: "Confidence: honest", confidentWrongShare: 0.02 },
+                routine: { lossPer1000: 12, costPer1000: 0.8, accuracy: 0.96, escalationShare: 0.1, n: 25 },
+                hard: { lossPer1000: 40, costPer1000: 2.5, accuracy: 0.8, escalationShare: 0.6, n: 5 },
+              },
+            ],
+            takeaway: {
+              pairingLabel: "Jev v1 + Claude Haiku 5.5",
+              routineEscalationShare: 0.1,
+              hardEscalationShare: 0.6,
+            },
+          },
+        },
+      },
+    });
+    const initRes = await cli(fetchImpl, "init");
+    expect(initRes.code).toBe(0);
+    expect(calls[0]!.path).toBe("/v1/workspace");
+    const cmpRes = await cli(fetchImpl, "compare", "acme/refund", "--fast", "systemone:jev-v1", "--escalate", "anthropic:claude-haiku-5-5");
+    expect(cmpRes.code).toBe(0);
+    expect(calls[1]!.path).toBe("/v1/runtimes/acme/refund/comparisons");
+    expect(cmpRes.out).toMatch(/Jev v1 \+ Claude Haiku 5\.5/);
+  });
+
   it("endpoints needs no API key", async () => {
     const { fetchImpl } = mockFetch({ "GET /api/v1/openapi.json": { body: { paths: {} } } });
     const lines: string[] = [];
