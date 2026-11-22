@@ -25,7 +25,7 @@ The `askwithai` command covers the full Decision API — decisions, runtimes, ve
 learning, templates and privacy — plus a generic `askwithai call <method> <path>` and
 `askwithai endpoints` that read the API's own live description, so they work against any
 endpoint, including ones added after this package's last release. Run `askwithai help` for the
-full list.
+full list. Start with `askwithai init`, which reads your workspace and prints the next steps for the path you chose in the guided start; `askwithai status <owner/runtime>` prints the runtime's Fast, Accurate and Improving scorecard, and `askwithai compare` tries fast and second-opinion model pairings on the same test cases.
 
 Full documentation — the client's methods, typed decisions with `createDecision`, the faux test server, waiting for input requests, and the `askwithai` command — is published at [askwith.ai](https://askwith.ai).
 
